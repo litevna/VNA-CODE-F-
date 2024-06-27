@@ -78,18 +78,27 @@ def load_and_process_data(df, num_sets):
     s11_complex = s11_real + 1j * s11_imag
     s21_complex = s21_real + 1j * s21_imag
 
-    s11_time = np.fft.ifft(s11_complex)
-    s21_time = np.fft.ifft(s21_complex)
-
-    voltage_magnitude_s11 = np.abs(s11_time)
-    voltage_magnitude_s21 = np.abs(s21_time)
-
+    # Ensure uniform frequency spacing by interpolating
+    freq_min, freq_max = frequencies.min(), frequencies.max()
     num_points = len(frequencies)
-    frequency_step = 2.052786e9  # 2.052786 GHz
-    time_step = 1 / frequency_step  # Time step corresponding to the frequency step
-    time_axis = np.fft.fftfreq(num_points, d=time_step)
+    uniform_freq = np.linspace(freq_min, freq_max, num_points)
+    s11_interp = np.interp(uniform_freq, frequencies, s11_complex.real) + 1j * np.interp(uniform_freq, frequencies, s11_complex.imag)
+    s21_interp = np.interp(uniform_freq, frequencies, s21_complex.real) + 1j * np.interp(uniform_freq, frequencies, s21_complex.imag)
 
-    return frequencies, voltage_magnitude_s11, voltage_magnitude_s21, time_axis
+    # Apply a Hanning window to reduce spectral leakage
+    window = np.hanning(num_points)
+    s11_windowed = s11_interp * window
+    s21_windowed = s21_interp * window
+
+    # Perform Inverse Fast Fourier Transform (IFFT)
+    s11_time = np.fft.ifft(s11_windowed)
+    s21_time = np.fft.ifft(s21_windowed)
+
+    # Calculate the time vector
+    frequency_step = uniform_freq[1] - uniform_freq[0]
+    time_vector = np.fft.fftfreq(num_points, d=frequency_step)
+
+    return uniform_freq, np.abs(s11_time), np.abs(s21_time), time_vector
 
 def copy_to_clipboard(event, text):
     r = Tk()
