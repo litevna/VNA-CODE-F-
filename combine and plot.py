@@ -140,9 +140,10 @@ def onselect(eclick, erelease):
         )
         print(details)
 
-        ax.plot(highest_peak_s11[0], highest_peak_s11[1], 'ro', label='Peak of s11')
-        ax.plot(highest_peak_s21[0], highest_peak_s21[1], 'bo', label='Peak of s21')
-        ax.annotate(details, xy=(0.5, -0.1), xycoords='axes fraction', ha='center', fontsize=8)
+        ax1.plot(highest_peak_s11[0], highest_peak_s11[1], 'ro', label='Peak of s11')
+        ax2.plot(highest_peak_s21[0], highest_peak_s21[1], 'bo', label='Peak of s21')
+        ax1.annotate(details, xy=(0.5, -0.1), xycoords='axes fraction', ha='center', fontsize=8)
+        ax2.annotate(details, xy=(0.5, -0.1), xycoords='axes fraction', ha='center', fontsize=8)
         fig.canvas.draw()
 
         details_var.set(details)
@@ -153,6 +154,12 @@ def confirm_selection():
 
 def auto_close_window():
     root.after(300000, root.destroy)  # Close the Tkinter window after 300 seconds (300,000 milliseconds)
+
+def find_peak_distance_from_zero(voltage_magnitude, time_axis):
+    peak_index = np.argmax(voltage_magnitude)
+    peak_time = time_axis[peak_index]
+    distance = peak_time * 9.891e7 / 2  # Speed of signal in meters per second divided by 2 for round-trip
+    return peak_time, distance
 
 root = Tk()
 folder_path = askdirectory(title="Select Folder Containing .s2p Files")
@@ -175,20 +182,39 @@ else:
         if data is not None:
             frequencies, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = data
 
-            fig, ax = plt.subplots(figsize=(12, 8))
-            ax.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
-            ax.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
-            ax.set_xlabel('Time (s)')
-            ax.set_ylabel('Voltage Magnitude')
-            ax.set_title(f'Voltage Magnitude of s11 and s21 vs Time {output_filename} - {num_sets_to_plot}')
-            ax.legend()
-            ax.grid(which='both')
-            ax.minorticks_on()
+            peak_time_s11, distance_s11 = find_peak_distance_from_zero(voltage_magnitude_s11, time_axis)
+            peak_time_s21, distance_s21 = find_peak_distance_from_zero(voltage_magnitude_s21, time_axis)
 
-            max_y = max(np.max(voltage_magnitude_s11), np.max(voltage_magnitude_s21)) * 1.1
-            ax.set_ylim(0, max_y)
+            print(f"Peak time s11: {peak_time_s11:.2e} s, Distance: {distance_s11:.2e} meters")
+            print(f"Peak time s21: {peak_time_s21:.2e} s, Distance: {distance_s21:.2e} meters")
 
-            rect_selector = RectangleSelector(ax, onselect, interactive=True, button=[1])
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
+            
+            # Plot for s11
+            ax1.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
+            ax1.set_xlabel('Time (s)')
+            ax1.set_ylabel('Voltage Magnitude')
+            ax1.set_title(f'Voltage Magnitude of s11 vs Time')
+            ax1.legend()
+            ax1.grid(which='both')
+            ax1.minorticks_on()
+
+            # Plot for s21
+            ax2.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
+            ax2.set_xlabel('Time (s)')
+            ax2.set_ylabel('Voltage Magnitude')
+            ax2.set_title(f'Voltage Magnitude of s21 vs Time')
+            ax2.legend()
+            ax2.grid(which='both')
+            ax2.minorticks_on()
+
+            max_y_s11 = np.max(voltage_magnitude_s11) * 1.1
+            ax1.set_ylim(0, max_y_s11)
+
+            max_y_s21 = np.max(voltage_magnitude_s21) * 1.1
+            ax2.set_ylim(0, max_y_s21)
+
+            rect_selector = RectangleSelector(ax1, onselect, interactive=True, button=[1])
 
             details_var = StringVar()
             details_label = Label(root, textvariable=details_var)
