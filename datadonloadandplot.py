@@ -111,6 +111,7 @@ if __name__ == "__main__":
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Magnitude")
         ax.set_xlim(xlim)  # Set initial x-axis limits
+        print(filepath)
 
         # Connect the function `on_click` to mouse button press events
         fig.canvas.mpl_connect('button_press_event', on_click)
