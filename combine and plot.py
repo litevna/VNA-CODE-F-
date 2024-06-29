@@ -3,24 +3,32 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
-from tkinter import Tk, Toplevel, Label, Button
+from tkinter import Tk, messagebox, Toplevel, Label, LEFT
 from tkinter.filedialog import askdirectory
 from scipy.signal import find_peaks
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import threading
-import queue
+
+# Global variables for plot and data
+voltage_magnitude_s11 = None
+voltage_magnitude_s21 = None
+time_axis = None
+ax1 = None
+ax2 = None
+fig = None
+folder_path = None
+
 
 class FileHandler(FileSystemEventHandler):
-    def __init__(self, folder_path, process_data_callback):
+    def __init__(self, folder_path, callback):
+        super().__init__()
         self.folder_path = folder_path
-        self.process_data_callback = process_data_callback
+        self.callback = callback
 
     def on_created(self, event):
-        if event.is_directory:
-            return
         if event.src_path.endswith('.s2p'):
-            self.process_data_callback()
+            self.callback()
+
 
 def process_file(file_path):
     with open(file_path, 'r') as file:
@@ -52,8 +60,11 @@ def process_file(file_path):
     else:
         return None
 
+
 def combine_files_in_folder(folder_path):
     all_data = []
+    input_folder_name = os.path.basename(folder_path)
+
     for filename in os.listdir(folder_path):
         if filename.endswith('.s2p'):
             file_path = os.path.join(folder_path, filename)
@@ -63,12 +74,13 @@ def combine_files_in_folder(folder_path):
                 all_data.append(df)
             else:
                 print(f"No data extracted from file: {file_path}")
-    
+
     if all_data:
         combined_df = pd.concat(all_data, ignore_index=True)
         return combined_df
     else:
         return None
+
 
 def load_and_process_data(df, num_sets):
     df = df.dropna()
@@ -95,63 +107,77 @@ def load_and_process_data(df, num_sets):
     time_vector = np.fft.fftfreq(num_points, d=frequency_step)
     return uniform_freq, np.abs(s11_time), np.abs(s21_time), time_vector
 
-def onselect(eclick, erelease):
-    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis
-    xmin, xmax = sorted([eclick.xdata, erelease.xdata])
-    indmin, indmax = np.searchsorted(time_axis, (xmin, xmax))
-    indmin = max(0, indmin)
-    indmax = min(len(time_axis) - 1, indmax)
-    if indmax > indmin:
-        selected_time_axis = time_axis[indmin:indmax]
-        selected_s11 = voltage_magnitude_s11[indmin:indmax]
-        selected_s21 = voltage_magnitude_s21[indmin:indmax]
-        s11_peaks, _ = find_peaks(selected_s11, prominence=0.1)
-        s21_peaks, _ = find_peaks(selected_s21, prominence=0.1)
-        peak_text = ""
-        if len(s11_peaks) > 0:
-            peak_time_s11 = selected_time_axis[s11_peaks[0]]
-            distance_s11 = peak_time_s11 * 9.891e7 / 2
-            peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n"
-        else:
-            peak_text += "No significant s11 peaks found in the selected area\n"
-        
-        if len(s21_peaks) > 0:
-            peak_time_s21 = selected_time_axis[s21_peaks[0]]
-            distance_s21 = peak_time_s21 * 9.891e7 / 2
-            peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters"
-        else:
-            peak_text += "No significant s21 peaks found in the selected area"
-        
-        queue.put(lambda: display_peak_info(peak_text))
-    else:
-        print("No significant peaks found in the selected area")
+
+def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
+    s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.1)
+    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.1)
+    peak_text = ""
+    if len(s11_peaks) > 0:
+        peak_time_s11 = time_axis[s11_peaks[0]]
+        distance_s11 = peak_time_s11 * 9.891e7 / 2
+        peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n\n"
+    if len(s21_peaks) > 0:
+        peak_time_s21 = time_axis[s21_peaks[0]]
+        distance_s21 = peak_time_s21 * 9.891e7 / 2
+        peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters\n\n"
+    display_peak_info(peak_text)
+
 
 def display_peak_info(peak_text):
-    peak_window = Toplevel()
-    peak_window.title("Peak Information")
-    label = Label(peak_window, text=peak_text, padx=20, pady=20)
-    label.pack()
-    button = Button(peak_window, text="Close", command=peak_window.destroy, padx=10, pady=10)
-    button.pack()
+    global fig
+    if fig is not None:
+        if not hasattr(display_peak_info, 'peak_window') or display_peak_info.peak_window is None:
+            # Execute Tkinter operations within the main loop
+            fig.canvas.manager.window.after(100, lambda: display_peak_info(peak_text))
+        else:
+            # Update existing peak window content
+            display_peak_info.peak_window.attributes('-topmost', True)
+            peak_label.config(text=peak_text)
+    else:
+        print("Plot window is not initialized yet.")
+
+
+def update_plot():
+    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, ax1, ax2, fig, folder_path
+
+    df = combine_files_in_folder(folder_path)
+    if df is not None:
+        uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
+        ax1.cla()
+        ax2.cla()
+        ax1.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
+        ax1.set_xlabel('Time (s)')
+        ax1.set_ylabel('Voltage Magnitude')
+        ax1.set_title('Voltage Magnitude of s11 vs Time - Combined Data')
+        ax1.legend()
+        ax1.grid(which='both')
+        ax1.minorticks_on()
+        ax2.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Voltage Magnitude')
+        ax2.set_title('Voltage Magnitude of s21 vs Time - Combined Data')
+        ax2.legend()
+        ax2.grid(which='both')
+        ax2.minorticks_on()
+        max_y_s11 = np.max(voltage_magnitude_s11) * 1.1
+        ax1.set_ylim(0, max_y_s11)
+        max_y_s21 = np.max(voltage_magnitude_s21) * 1.1
+        ax2.set_ylim(0, max_y_s21)
+        fig.canvas.draw_idle()
+        auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+
 
 def main():
-    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, ax1, ax2, fig, queue
+    global ax1, ax2, fig, folder_path
 
     root = Tk()
     root.withdraw()
     folder_path = askdirectory(title="Select folder containing S2P files")
-    if not folder_path:
-        print("No folder selected.")
-        return
-
-    queue = queue.Queue()
-
-    def update_plot():
+    if folder_path:
         df = combine_files_in_folder(folder_path)
         if df is not None:
             uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
-            ax1.cla()
-            ax2.cla()
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
             ax1.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
             ax1.set_xlabel('Time (s)')
             ax1.set_ylabel('Voltage Magnitude')
@@ -170,50 +196,17 @@ def main():
             ax1.set_ylim(0, max_y_s11)
             max_y_s21 = np.max(voltage_magnitude_s21) * 1.1
             ax2.set_ylim(0, max_y_s21)
-            fig.canvas.draw()
-            auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
-
-    observer = Observer()
-    event_handler = FileHandler(folder_path, update_plot)
-    observer.schedule(event_handler, folder_path, recursive=False)
-    observer.start()
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
-    rect_selector_s11 = RectangleSelector(ax1, onselect, interactive=True, drag_from_anywhere=True, props=dict(facecolor='red', edgecolor='black', alpha=0.5, fill=True))
-    rect_selector_s21 = RectangleSelector(ax2, onselect, interactive=True, drag_from_anywhere=True, props=dict(facecolor='red', edgecolor='black', alpha=0.5, fill=True))
-    plt.tight_layout()
-    plt.ion()
-    plt.show()
-
-    def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
-        s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.1)
-        s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.1)
-        peak_text = ""
-        if len(s11_peaks) > 0:
-            peak_time_s11 = time_axis[s11_peaks[0]]
-            distance_s11 = peak_time_s11 * 9.891e7 / 2
-            peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n"
+            observer = Observer()
+            observer.schedule(FileHandler(folder_path, update_plot), folder_path)
+            observer.start()
+            plt.tight_layout()
+            plt.show()
+            root.mainloop()
         else:
-            peak_text += "No significant s11 peaks found\n"
-        
-        if len(s21_peaks) > 0:
-            peak_time_s21 = time_axis[s21_peaks[0]]
-            distance_s21 = peak_time_s21 * 9.891e7 / 2
-            peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters"
-        else:
-            peak_text += "No significant s21 peaks found"
+            messagebox.showerror("Error", f"No valid data found in folder: {folder_path}")
+    else:
+        messagebox.showinfo("Info", "Folder selection cancelled.")
 
-        queue.put(lambda: display_peak_info(peak_text))
-
-    try:
-        while True:
-            plt.pause(1)
-            while not queue.empty():
-                callback = queue.get()
-                callback()
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
 
 if __name__ == "__main__":
     main()
