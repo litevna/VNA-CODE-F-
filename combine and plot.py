@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from tkinter import Tk, messagebox, Toplevel, Label, LEFT
+from tkinter import Tk, messagebox
 from tkinter.filedialog import askdirectory
 from scipy.signal import find_peaks
 from watchdog.observers import Observer
@@ -20,7 +20,9 @@ folder_path = None
 peak_label = None
 root = None
 queue = Queue()
-data_file_path = "combined_data.csv"
+
+# Near the beginning of your script or wherever the variables are defined
+data_file_path = r"C:\Users\VNA\Desktop\VNAF\1 July\Excel Data\combined_data.csv"
 processed_files = set()
 
 class FileHandler(FileSystemEventHandler):
@@ -110,35 +112,13 @@ def load_and_process_data(df, num_sets):
     time_vector = np.fft.fftfreq(num_points, d=frequency_step)
     return uniform_freq, np.abs(s11_time), np.abs(s21_time), time_vector
 
-def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
+def auto_display_peaks(ax, time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
     s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.05)
     s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.05)
-    peak_text = ""
     if len(s11_peaks) > 0:
-        peak_time_s11 = time_axis[s11_peaks[0]]
-        distance_s11 = peak_time_s11 * 9.891e7 / 2
-        peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n\n"
+        ax.plot(time_axis[s11_peaks], voltage_magnitude_s11[s11_peaks], 'x', label='s11 Peaks', color='red')
     if len(s21_peaks) > 0:
-        peak_time_s21 = time_axis[s21_peaks[0]]
-        distance_s21 = peak_time_s21 * 9.891e7 / 2
-        peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters\n\n"
-    queue.put(peak_text)
-
-def display_peak_info():
-    global fig, peak_label
-    peak_text = queue.get()
-    if fig is not None:
-        if not hasattr(display_peak_info, 'peak_window') or display_peak_info.peak_window is None:
-            peak_window = Toplevel()
-            peak_window.title("Peak Information")
-            peak_label = Label(peak_window, text=peak_text, justify=LEFT)
-            peak_label.pack()
-            display_peak_info.peak_window = peak_window
-        else:
-            display_peak_info.peak_window.attributes('-topmost', True)
-            peak_label.config(text=peak_text)
-    else:
-        print("Plot window is not initialized yet.")
+        ax.plot(time_axis[s21_peaks], voltage_magnitude_s21[s21_peaks], 'o', label='s21 Peaks', color='green')
 
 def update_plot(frame):
     global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, ax, fig, folder_path
@@ -150,6 +130,7 @@ def update_plot(frame):
             ax.clear()
             ax.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
             ax.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
+            auto_display_peaks(ax, time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
             ax.set_xlabel('Time (s)')
             ax.set_ylabel('Voltage Magnitude')
             ax.set_title('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
@@ -159,7 +140,6 @@ def update_plot(frame):
             max_y = np.max([np.max(voltage_magnitude_s11), np.max(voltage_magnitude_s21)]) * 1.1
             ax.set_ylim(0, max_y)
             ax.set_xlim(0, time_axis.max() * 0.1)  # Adjust to focus on the relevant area
-            auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
         else:
             ax.set_xlabel('Time (s)')
             ax.set_ylabel('Voltage Magnitude')
@@ -187,6 +167,7 @@ def main():
             uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
             fig, ax = plt.subplots(figsize=(10, 6))
             ani = FuncAnimation(fig, update_plot, interval=2000)  # Update plot every 2 seconds
+            start_observer()
             plt.show()
             root.mainloop()
         else:
