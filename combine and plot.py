@@ -7,6 +7,7 @@ from tkinter.filedialog import askdirectory
 from scipy.signal import find_peaks
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from matplotlib.animation import FuncAnimation
 from queue import Queue
 
 # Global variables for plot and data
@@ -19,6 +20,8 @@ folder_path = None
 peak_label = None
 root = None
 queue = Queue()
+data_file_path = "combined_data.csv"
+processed_files = set()
 
 class FileHandler(FileSystemEventHandler):
     def __init__(self, folder_path, callback):
@@ -61,21 +64,26 @@ def process_file(file_path):
         return None
 
 def combine_files_in_folder(folder_path):
+    global processed_files
     all_data = []
+    new_files = False
     for filename in os.listdir(folder_path):
-        if filename.endswith('.s2p'):
+        if filename.endswith('.s2p') and filename not in processed_files:
             file_path = os.path.join(folder_path, filename)
             print(f"Processing file: {file_path}")
             df = process_file(file_path)
             if df is not None:
                 all_data.append(df)
+                processed_files.add(filename)
+                new_files = True
             else:
                 print(f"No data extracted from file: {file_path}")
     if all_data:
         combined_df = pd.concat(all_data, ignore_index=True)
-        return combined_df
+        combined_df.to_csv(data_file_path, index=False)  # Save combined data to CSV
+        return combined_df, new_files
     else:
-        return None
+        return None, new_files
 
 def load_and_process_data(df, num_sets):
     df = df.dropna()
@@ -132,57 +140,14 @@ def display_peak_info():
     else:
         print("Plot window is not initialized yet.")
 
-def update_plot():
+def update_plot(frame):
     global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, ax, fig, folder_path
 
-    if not queue.empty():
-        display_peak_info()
-
-    # Clear previous plot
-    ax.clear()
-
-    df = combine_files_in_folder(folder_path)
-    if df is not None:
-        uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
-        ax.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
-        ax.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel('Voltage Magnitude')
-        ax.set_title('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
-        ax.legend()
-        ax.grid(which='both')
-        ax.minorticks_on()
-        max_y = np.max([np.max(voltage_magnitude_s11), np.max(voltage_magnitude_s21)]) * 1.1
-        ax.set_ylim(0, max_y)
-        ax.set_xlim(0, time_axis.max() * 0.1)  # Adjust to focus on the relevant area
-        fig.canvas.draw_idle()
-    else:
-        ax.set_xlabel('Time (s)')
-        ax.set_ylabel('Voltage Magnitude')
-        ax.set_title('No Data Available')
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.text(0.5, 0.5, 'No valid data found', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
-        fig.canvas.draw_idle()
-
-def start_observer():
-    global folder_path
-
-    observer = Observer()
-    observer.schedule(FileHandler(folder_path, update_plot), folder_path)
-    observer.start()
-
-def main():
-    global ax, fig, folder_path, root
-
-    root = Tk()
-    root.withdraw()
-    folder_path = askdirectory(title="Select folder containing S2P files")
-    if folder_path:
-        df = combine_files_in_folder(folder_path)
+    df, new_files = combine_files_in_folder(folder_path)
+    if new_files:
         if df is not None:
             uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
-            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.clear()
             ax.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
             ax.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
             ax.set_xlabel('Time (s)')
@@ -194,8 +159,34 @@ def main():
             max_y = np.max([np.max(voltage_magnitude_s11), np.max(voltage_magnitude_s21)]) * 1.1
             ax.set_ylim(0, max_y)
             ax.set_xlim(0, time_axis.max() * 0.1)  # Adjust to focus on the relevant area
-            start_observer()
-            plt.tight_layout()
+            auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+        else:
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel('Voltage Magnitude')
+            ax.set_title('No Data Available')
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.text(0.5, 0.5, 'No valid data found', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+
+def start_observer():
+    global folder_path
+
+    observer = Observer()
+    observer.schedule(FileHandler(folder_path, lambda: queue.put('update')), folder_path)
+    observer.start()
+
+def main():
+    global ax, fig, folder_path, root
+
+    root = Tk()
+    root.withdraw()
+    folder_path = askdirectory(title="Select folder containing S2P files")
+    if folder_path:
+        df, _ = combine_files_in_folder(folder_path)
+        if df is not None:
+            uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ani = FuncAnimation(fig, update_plot, interval=2000)  # Update plot every 2 seconds
             plt.show()
             root.mainloop()
         else:
