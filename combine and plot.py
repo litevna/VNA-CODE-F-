@@ -1,21 +1,18 @@
 import os
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from tkinter import Tk, messagebox
-from tkinter.filedialog import askdirectory
+import pyqtgraph as pg
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
 from scipy.signal import find_peaks
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from matplotlib.animation import FuncAnimation
 from queue import Queue
 
 # Global variables for plot and data
 voltage_magnitude_s11 = None
 voltage_magnitude_s21 = None
 time_axis = None
-ax = None
-fig = None
 folder_path = None
 peak_label = None
 root = None
@@ -38,32 +35,32 @@ class FileHandler(FileSystemEventHandler):
 def process_file(file_path):
     with open(file_path, 'r') as file:
         lines = file.readlines()
-    data_start_index = 0
-    for i, line in enumerate(lines):
-        if line.strip() and (line[0].isdigit() or line[0] == '!'):
-            data_start_index = i
-            break
-    data_lines = lines[data_start_index:]
-    data = []
-    for line in data_lines:
-        if line.startswith('!'):
-            line = line[1:]
-        columns = line.split()
-        if len(columns) >= 5:
-            try:
-                frequency = float(columns[0])
-                s11_real = float(columns[1])
-                s11_imag = float(columns[2])
-                s21_real = float(columns[3])
-                s21_imag = float(columns[4])
-                data.append([frequency, s11_real, s11_imag, s21_real, s21_imag])
-            except ValueError:
-                print(f"Skipping line with invalid data: {line.strip()}")
-    if data:
-        df = pd.DataFrame(data, columns=['frequency', 's11 real', 's11 imag', 's21 real', 's21 imag'])
-        return df
-    else:
-        return None
+        data_start_index = 0
+        for i, line in enumerate(lines):
+            if line.strip() and (line[0].isdigit() or line[0] == '!'):
+                data_start_index = i
+                break
+        data_lines = lines[data_start_index:]
+        data = []
+        for line in data_lines:
+            if line.startswith('!'):
+                line = line[1:]
+            columns = line.split()
+            if len(columns) >= 5:
+                try:
+                    frequency = float(columns[0])
+                    s11_real = float(columns[1])
+                    s11_imag = float(columns[2])
+                    s21_real = float(columns[3])
+                    s21_imag = float(columns[4])
+                    data.append([frequency, s11_real, s11_imag, s21_real, s21_imag])
+                except ValueError:
+                    print(f"Skipping line with invalid data: {line.strip()}")
+        if data:
+            df = pd.DataFrame(data, columns=['frequency', 's11 real', 's11 imag', 's21 real', 's21 imag'])
+            return df
+        else:
+            return None
 
 def combine_files_in_folder(folder_path):
     global processed_files
@@ -112,41 +109,48 @@ def load_and_process_data(df, num_sets):
     time_vector = np.fft.fftfreq(num_points, d=frequency_step)
     return uniform_freq, np.abs(s11_time), np.abs(s21_time), time_vector
 
-def auto_display_peaks(ax, time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
-    s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.05)
-    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.05)
+def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
+    s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=1)  # Adjust prominence if necessary
+    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=1)  # Adjust prominence if necessary
+    peak_text = ""
     if len(s11_peaks) > 0:
-        ax.plot(time_axis[s11_peaks], voltage_magnitude_s11[s11_peaks], 'x', label='s11 Peaks', color='red')
+        peak_time_s11 = time_axis[s11_peaks[0]]
+        distance_s11 = peak_time_s11 * 9.891e7 / 2
+        peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n\n"
     if len(s21_peaks) > 0:
-        ax.plot(time_axis[s21_peaks], voltage_magnitude_s21[s21_peaks], 'o', label='s21 Peaks', color='green')
+        peak_time_s21 = time_axis[s21_peaks[0]]
+        distance_s21 = peak_time_s21 * 9.891e7 / 2
+        peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters\n\n"
+    queue.put(peak_text)
 
-def update_plot(frame):
-    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, ax, fig, folder_path
+def display_peak_info():
+    global peak_label
+    peak_text = queue.get()
+    if peak_label is not None:
+        peak_label.setText(peak_text)
+
+def update_plot():
+    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, folder_path
 
     df, new_files = combine_files_in_folder(folder_path)
     if new_files:
         if df is not None:
             uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
-            ax.clear()
-            ax.plot(time_axis, voltage_magnitude_s11, label='s11 Magnitude')
-            ax.plot(time_axis, voltage_magnitude_s21, label='s21 Magnitude')
-            auto_display_peaks(ax, time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
-            ax.set_xlabel('Time (s)')
-            ax.set_ylabel('Voltage Magnitude')
-            ax.set_title('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
-            ax.legend()
-            ax.grid(which='both')
-            ax.minorticks_on()
-            max_y = np.max([np.max(voltage_magnitude_s11), np.max(voltage_magnitude_s21)]) * 1.1
-            ax.set_ylim(0, max_y)
-            ax.set_xlim(0, time_axis.max() * 0.1)  # Adjust to focus on the relevant area
+            plot_widget.clear()
+            plot_widget.plot(time_axis, voltage_magnitude_s11, pen='r', name='s11 Magnitude')
+            plot_widget.plot(time_axis, voltage_magnitude_s21, pen='g', name='s21 Magnitude')
+            plot_widget.setLabel('bottom', 'Time (s)')
+            plot_widget.setLabel('left', 'Voltage Magnitude')
+            plot_widget.setTitle('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
+            plot_widget.showGrid(x=True, y=True)  # Enable grid lines
+            auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+            display_peak_info()
         else:
-            ax.set_xlabel('Time (s)')
-            ax.set_ylabel('Voltage Magnitude')
-            ax.set_title('No Data Available')
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.text(0.5, 0.5, 'No valid data found', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+            plot_widget.clear()
+            plot_widget.setLabel('bottom', 'Time (s)')
+            plot_widget.setLabel('left', 'Voltage Magnitude')
+            plot_widget.setTitle('No Data Available')
+            plot_widget.showGrid(x=True, y=True)  # Enable grid lines
 
 def start_observer():
     global folder_path
@@ -156,24 +160,34 @@ def start_observer():
     observer.start()
 
 def main():
-    global ax, fig, folder_path, root
+    app = QApplication([])
+    global folder_path, root, plot_widget, peak_label
 
-    root = Tk()
-    root.withdraw()
-    folder_path = askdirectory(title="Select folder containing S2P files")
+    win = pg.GraphicsLayoutWidget()
+    win.setWindowTitle('VNA Data Visualization')
+    plot_widget = win.addPlot()
+    peak_label = win.addLabel()  # Add label for peak information
+    folder_path = QFileDialog.getExistingDirectory(win, "Select folder containing S2P files")
     if folder_path:
         df, _ = combine_files_in_folder(folder_path)
         if df is not None:
             uniform_freq, voltage_magnitude_s11, voltage_magnitude_s21, time_axis = load_and_process_data(df.copy(), 1)
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ani = FuncAnimation(fig, update_plot, interval=2000)  # Update plot every 2 seconds
+            plot_widget.plot(time_axis, voltage_magnitude_s11, pen='r', name='s11 Magnitude')
+            plot_widget.plot(time_axis, voltage_magnitude_s21, pen='g', name='s21 Magnitude')
+            plot_widget.setLabel('bottom', 'Time (s)')
+            plot_widget.setLabel('left', 'Voltage Magnitude')
+            plot_widget.setTitle('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
+            plot_widget.showGrid(x=True, y=True)  # Enable grid lines
+            timer = QTimer()
+            timer.timeout.connect(update_plot)
+            timer.start(2000)  # Update plot every 2 seconds
             start_observer()
-            plt.show()
-            root.mainloop()
+            win.show()
+            app.exec_()
         else:
-            messagebox.showerror("Error", f"No valid data found in folder: {folder_path}")
+            QMessageBox.critical(win, "Error", f"No valid data found in folder: {folder_path}")
     else:
-        messagebox.showinfo("Info", "Folder selection cancelled.")
+        QMessageBox.information(win, "Info", "Folder selection cancelled.")
 
 if __name__ == "__main__":
     main()
