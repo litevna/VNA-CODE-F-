@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph import ScatterPlotItem
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QLabel, QVBoxLayout, QWidget
 from scipy.signal import find_peaks
@@ -15,6 +16,7 @@ voltage_magnitude_s21 = None
 time_axis = None
 folder_path = None
 peak_label = None
+peak_scatter_items = []  # List to store scatter plot items for peaks
 queue = Queue()
 
 # Near the beginning of your script or wherever the variables are defined
@@ -110,17 +112,24 @@ def load_and_process_data(df, num_sets):
 
 def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
     s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.01)
-    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.0001)
+    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.001)
     peak_text = ""
+    peak_coordinates = []
+    distance_text = ""
     if len(s11_peaks) > 0:
         peak_time_s11 = time_axis[s11_peaks[0]]
-        distance_s11 = peak_time_s11 * 9.891e7 /2
+        distance_s11 = peak_time_s11 * 9.891e7 / 2
         peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n\n"
+        peak_coordinates.append((peak_time_s11, voltage_magnitude_s11[s11_peaks[0]], 's11'))
     if len(s21_peaks) > 0:
         peak_time_s21 = time_axis[s21_peaks[0]]
-        distance_s21 = peak_time_s21 * 9.891e7 /2
+        distance_s21 = peak_time_s21 * 9.891e7 / 2
         peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters\n\n"
-    return peak_text
+        peak_coordinates.append((peak_time_s21, voltage_magnitude_s21[s21_peaks[0]], 's21'))
+    if len(s11_peaks) > 0 and len(s21_peaks) > 0:
+        distance_between_peaks = abs(distance_s21 - distance_s11)
+        distance_text = f"Distance between peaks: {distance_between_peaks:.2e} meters\n\n"
+    return peak_text + distance_text, peak_coordinates
 
 def display_peak_info(peak_text):
     global peak_label
@@ -128,7 +137,7 @@ def display_peak_info(peak_text):
         peak_label.setText(peak_text)
 
 def update_plot():
-    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, folder_path
+    global voltage_magnitude_s11, voltage_magnitude_s21, time_axis, folder_path, peak_scatter_items
 
     df, new_files = combine_files_in_folder(folder_path)
     if new_files:
@@ -141,8 +150,20 @@ def update_plot():
             plot_widget.setLabel('left', 'Voltage Magnitude')
             plot_widget.setTitle('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
             plot_widget.showGrid(x=True, y=True)  # Enable grid lines
-            peak_text = auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
-            display_peak_info(peak_text)  # Display the peak info
+
+            # Clear previous peak markers
+            for scatter_item in peak_scatter_items:
+                plot_widget.removeItem(scatter_item)
+            peak_scatter_items = []
+
+            peak_text, peak_coordinates = auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+            display_peak_info(peak_text)
+
+            # Add new peak markers
+            for (x, y, label) in peak_coordinates:
+                scatter_item = ScatterPlotItem([{'pos': (x, y), 'symbol': 'x', 'size': 10, 'brush': 'r' if label == 's11' else 'g'}])
+                plot_widget.addItem(scatter_item)
+                peak_scatter_items.append(scatter_item)
         else:
             plot_widget.clear()
             plot_widget.setLabel('bottom', 'Time (s)')
@@ -184,6 +205,16 @@ def main():
             plot_widget.setLabel('left', 'Voltage Magnitude')
             plot_widget.setTitle('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
             plot_widget.showGrid(x=True, y=True)  # Enable grid lines
+
+            peak_text, peak_coordinates = auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+            display_peak_info(peak_text)
+
+            # Add peak markers
+            for (x, y, label) in peak_coordinates:
+                scatter_item = ScatterPlotItem([{'pos': (x, y), 'symbol': 'x', 'size': 10, 'brush': 'r' if label == 's11' else 'g'}])
+                plot_widget.addItem(scatter_item)
+                peak_scatter_items.append(scatter_item)
+
             timer = QTimer()
             timer.timeout.connect(update_plot)
             timer.start(2000)  # Update plot every 2 seconds
