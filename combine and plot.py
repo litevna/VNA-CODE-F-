@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QLabel, QVBoxLayout, QWidget
 from scipy.signal import find_peaks
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -15,7 +15,6 @@ voltage_magnitude_s21 = None
 time_axis = None
 folder_path = None
 peak_label = None
-root = None
 queue = Queue()
 
 # Near the beginning of your script or wherever the variables are defined
@@ -110,22 +109,21 @@ def load_and_process_data(df, num_sets):
     return uniform_freq, np.abs(s11_time), np.abs(s21_time), time_vector
 
 def auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21):
-    s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=1)  # Adjust prominence if necessary
-    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=1)  # Adjust prominence if necessary
+    s11_peaks, _ = find_peaks(voltage_magnitude_s11, prominence=0.01)
+    s21_peaks, _ = find_peaks(voltage_magnitude_s21, prominence=0.0001)
     peak_text = ""
     if len(s11_peaks) > 0:
         peak_time_s11 = time_axis[s11_peaks[0]]
-        distance_s11 = peak_time_s11 * 9.891e7 / 2
+        distance_s11 = peak_time_s11 * 9.891e7 /2
         peak_text += f"s11 peak:\nTime: {peak_time_s11:.2e} s\nDistance: {distance_s11:.2e} meters\n\n"
     if len(s21_peaks) > 0:
         peak_time_s21 = time_axis[s21_peaks[0]]
-        distance_s21 = peak_time_s21 * 9.891e7 / 2
+        distance_s21 = peak_time_s21 * 9.891e7 /2
         peak_text += f"s21 peak:\nTime: {peak_time_s21:.2e} s\nDistance: {distance_s21:.2e} meters\n\n"
-    queue.put(peak_text)
+    return peak_text
 
-def display_peak_info():
+def display_peak_info(peak_text):
     global peak_label
-    peak_text = queue.get()
     if peak_label is not None:
         peak_label.setText(peak_text)
 
@@ -143,8 +141,8 @@ def update_plot():
             plot_widget.setLabel('left', 'Voltage Magnitude')
             plot_widget.setTitle('Voltage Magnitude of s11 and s21 vs Time - Combined Data')
             plot_widget.showGrid(x=True, y=True)  # Enable grid lines
-            auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
-            display_peak_info()
+            peak_text = auto_display_peaks(time_axis, voltage_magnitude_s11, voltage_magnitude_s21)
+            display_peak_info(peak_text)  # Display the peak info
         else:
             plot_widget.clear()
             plot_widget.setLabel('bottom', 'Time (s)')
@@ -161,12 +159,20 @@ def start_observer():
 
 def main():
     app = QApplication([])
-    global folder_path, root, plot_widget, peak_label
+    global folder_path, plot_widget, peak_label
 
-    win = pg.GraphicsLayoutWidget()
+    win = QWidget()
     win.setWindowTitle('VNA Data Visualization')
-    plot_widget = win.addPlot()
-    peak_label = win.addLabel()  # Add label for peak information
+
+    layout = QVBoxLayout()
+    plot_widget = pg.PlotWidget()
+    layout.addWidget(plot_widget)
+
+    peak_label = QLabel("")
+    layout.addWidget(peak_label)
+
+    win.setLayout(layout)
+
     folder_path = QFileDialog.getExistingDirectory(win, "Select folder containing S2P files")
     if folder_path:
         df, _ = combine_files_in_folder(folder_path)
@@ -186,8 +192,9 @@ def main():
             app.exec_()
         else:
             QMessageBox.critical(win, "Error", f"No valid data found in folder: {folder_path}")
+
     else:
-        QMessageBox.information(win, "Info", "Folder selection cancelled.")
+        QMessageBox.warning(win, "Info", "Folder selection cancelled.")
 
 if __name__ == "__main__":
     main()
